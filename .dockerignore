@@ -1,0 +1,25 @@
+# Keep the build context small and reproducible
+.git
+.github
+.next
+/out
+/build
+/coverage
+/test-results
+/playwright-report
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.env*
+!.env.example
+.DS_Store
+*.pem
+.vercel
+.turbo
+.eslintcache
+*.tsbuildinfo
+Dockerfile
+.dockerignore
+README.md
