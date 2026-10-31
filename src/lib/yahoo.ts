@@ -33,6 +33,54 @@ export interface QuoteFetch {
   series: PricePoint[];
 }
 
+export interface SymbolResult {
+  symbol: string;
+  name: string;
+  exchange: string;
+  type: string;
+}
+
+/**
+ * Natural-language symbol search ("apple" → AAPL, "s&p 500" → ^GSPC).
+ * Quotes-only, no news — keeps the response small and fast.
+ */
+export async function searchSymbols(
+  query: string,
+  signal?: AbortSignal
+): Promise<SymbolResult[]> {
+  const q = query.trim().slice(0, 60);
+  if (!q) return [];
+  const moduleOptions = signal ? { fetchOptions: { signal } } : {};
+  const res = await yf.search(
+    q,
+    { quotesCount: 8, newsCount: 0 },
+    moduleOptions
+  );
+  return (res.quotes ?? [])
+    .filter(
+      (qt): qt is typeof qt & { symbol: string } =>
+        typeof (qt as { symbol?: unknown }).symbol === "string" &&
+        (qt as { isYahooFinance?: unknown }).isYahooFinance !== false
+    )
+    .map((qt) => {
+      const r = qt as {
+        symbol: string;
+        shortname?: string;
+        longname?: string;
+        exchange?: string;
+        quoteType?: string;
+        typeDisp?: string;
+      };
+      return {
+        symbol: r.symbol,
+        name: r.shortname ?? r.longname ?? r.symbol,
+        exchange: r.exchange ?? "",
+        type: r.typeDisp ?? r.quoteType ?? "",
+      };
+    })
+    .slice(0, 8);
+}
+
 /** Fetch adjusted daily closes from Yahoo Finance. */
 export async function fetchSeries(
   rawTicker: string,
@@ -44,11 +92,7 @@ export async function fetchSeries(
   const moduleOptions = signal ? { fetchOptions: { signal } } : {};
 
   const [chart, info] = await Promise.all([
-    yf.chart(
-      ticker,
-      { period1, interval: "1d" },
-      moduleOptions
-    ),
+    yf.chart(ticker, { period1, interval: "1d" }, moduleOptions),
     // Company name / currency are cosmetic — never fail the request over them.
     yf
       .quoteSummary(ticker, { modules: ["price"] }, moduleOptions)

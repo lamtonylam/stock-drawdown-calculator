@@ -229,7 +229,7 @@ export default function Home() {
             <TriangleAlertIcon />
             <AlertTitle>Couldn&apos;t load {ticker}</AlertTitle>
             <AlertDescription>
-              {error}. Check the symbol — try ^GSPC, QQQ, AAPL or BTC-USD.
+              {error}. Try searching for Apple, S&P 500 or bitcoin.
             </AlertDescription>
           </Alert>
         )}
@@ -254,8 +254,7 @@ export default function Home() {
                   </Badge>
                   <Badge variant="outline">{data.range}</Badge>
                   <span className="text-xs text-muted-foreground">
-                    {data.points.toLocaleString()} closes ·{" "}
-                    {data.currency}
+                    {data.points.toLocaleString()} closes · {data.currency}
                   </span>
                 </div>
               </div>
