@@ -11,13 +11,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { friendlyName } from "@/lib/names";
 import { RANGES, type RangeKey } from "@/lib/ranges";
 
 const RANGE_OPTIONS: { value: RangeKey; label: string }[] = RANGES.map(
   (value) => ({ value, label: value === "MAX" ? "Max" : value })
 );
 
-const PRESETS = ["^GSPC", "^NDX", "^DJI", "AAPL", "NVDA", "BTC-USD"];
+const PRESETS = ["^GSPC", "^NDX", "^DJI", "AAPL", "NVDA", "BTC-USD"].map(
+  (symbol) => ({ symbol, label: friendlyName(symbol) })
+);
 
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
@@ -51,6 +54,11 @@ export function TickerForm({
   const listId = useId();
   const boxRef = useRef<HTMLDivElement>(null);
   const searchSeq = useRef(0);
+  // True only when the last draft change came from typing in the box.
+  // Tells real typing apart from parent-driven updates (initial value,
+  // preset clicks, submitted symbols), which must dismiss — never open —
+  // the dropdown.
+  const typedRef = useRef(false);
 
   // Debounced natural-language lookup — "apple" → AAPL, "s&p" → ^GSPC.
   // State writes happen inside the timer callback (never synchronously in
@@ -58,6 +66,18 @@ export function TickerForm({
   useEffect(() => {
     const q = draft.trim();
     const timer = setTimeout(async () => {
+      if (!typedRef.current) {
+        // Parent-driven change (or initial mount) — dismiss and invalidate
+        // any in-flight lookup so a slow response can't reopen the
+        // dropdown afterwards.
+        searchSeq.current++;
+        setResults([]);
+        setOpen(false);
+        setHighlight(-1);
+        setSearching(false);
+        return;
+      }
+      typedRef.current = false;
       if (q.length < MIN_QUERY_LENGTH) {
         setResults([]);
         setOpen(false);
@@ -99,19 +119,29 @@ export function TickerForm({
     return () => document.removeEventListener("pointerdown", onDown);
   }, []);
 
-  const submit = (r: RangeKey = range) => {
+  const dismiss = () => {
+    // Invalidate any in-flight lookup so it can't reopen the dropdown, and
+    // clear results so refocusing the input doesn't resurrect a stale list.
+    searchSeq.current++;
+    setResults([]);
     setOpen(false);
-    // Prefer the highlighted suggestion — typing "apple" + Enter resolves to
-    // AAPL instead of sending the raw text as a (bogus) ticker.
-    if (open && results.length > 0) {
-      onSubmit(results[Math.max(highlight, 0)].symbol, r);
-    } else {
-      onSubmit(draft.trim().toUpperCase() || "^GSPC", r);
-    }
+    setHighlight(-1);
+  };
+
+  const submit = (r: RangeKey = range) => {
+    // Prefer the top suggestion — typing "apple" + Enter resolves to AAPL
+    // instead of sending the raw text as a (bogus) ticker. Uses `results`
+    // rather than `open` so Escape-to-hide followed by Enter still resolves.
+    const pick =
+      results.length > 0
+        ? results[Math.max(highlight, 0)].symbol
+        : draft.trim().toUpperCase() || "^GSPC";
+    dismiss();
+    onSubmit(pick, r);
   };
 
   const choose = (s: SymbolResult) => {
-    setOpen(false);
+    dismiss();
     onSubmit(s.symbol, range);
   };
 
@@ -129,6 +159,7 @@ export function TickerForm({
           <Input
             value={draft}
             onChange={(e) => {
+              typedRef.current = true;
               onDraftChange(e.target.value);
             }}
             onFocus={() => {
@@ -247,17 +278,18 @@ export function TickerForm({
         <div className="flex flex-wrap gap-1">
           {PRESETS.map((p) => (
             <Button
-              key={p}
+              key={p.symbol}
               type="button"
               variant="ghost"
               size="xs"
-              aria-pressed={ticker === p}
+              title={p.symbol}
+              aria-pressed={ticker === p.symbol}
               onClick={() => {
-                onSubmit(p, range);
+                onSubmit(p.symbol, range);
               }}
-              className="font-mono text-[11px] text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
+              className="text-[11px] text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
             >
-              {p}
+              {p.label}
             </Button>
           ))}
         </div>

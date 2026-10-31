@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { PricePoint } from "@/lib/drawdown";
 import { fmtDate, fmtPct } from "@/lib/format";
+import { friendlyName } from "@/lib/names";
 import { DEFAULT_RANGE, isRangeKey, type RangeKey } from "@/lib/ranges";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -164,9 +165,9 @@ export default function Home() {
       <main className="relative mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-10 sm:px-6 sm:py-14">
         <div role="status" aria-live="polite" className="sr-only">
           {loading
-            ? `Loading ${ticker} data`
+            ? `Loading ${friendlyName(ticker)} data`
             : error
-              ? `Could not load ${ticker}: ${error}`
+              ? `Could not load ${friendlyName(ticker)}: ${error}`
               : data
                 ? `${data.name}: ${fmtPct(data.drawdownPct)} from its peak on ${fmtDate(data.peakDate)}`
                 : ""}
@@ -203,8 +204,8 @@ export default function Home() {
 
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
             How far has{" "}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-              {ticker}
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-foreground">
+              {friendlyName(ticker)}
             </span>{" "}
             fallen from its peak — and when did it last trade this low? That gap
             is how many days of gains were wiped out.
@@ -227,7 +228,7 @@ export default function Home() {
         {error && (
           <Alert variant="destructive" className="bg-card">
             <TriangleAlertIcon />
-            <AlertTitle>Couldn&apos;t load {ticker}</AlertTitle>
+            <AlertTitle>Couldn&apos;t load {friendlyName(ticker)}</AlertTitle>
             <AlertDescription>
               {error}. Try searching for Apple, S&P 500 or bitcoin.
             </AlertDescription>
