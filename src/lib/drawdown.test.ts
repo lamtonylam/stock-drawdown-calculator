@@ -33,7 +33,7 @@ describe("calculateDrawdown", () => {
     // 2024-06-12 -> 2025-03-10
     expect(r.calendarDaysLost).toBe(271);
     expect(r.tradingDaysLost).toBe(3); // 5 points - 1 - idx(1)
-    expect(r.underwaterDays).toBeGreaterThan(0);
+    expect(r.daysSincePeak).toBeGreaterThan(0);
   });
 
   it("reports at-high when last point is the peak", () => {

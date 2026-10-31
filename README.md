@@ -20,7 +20,7 @@ npm run dev
 | Last seen this low | Most recent close **before the peak** that was ≤ today's price |
 | Calendar days lost | Days between that date and today |
 | Trading days lost | Same span counted in closes in the series |
-| Underwater days | Calendar days since the peak |
+| Days since peak | Calendar days since the peak |
 | Peak / current | Prices and dates behind the numbers |
 
 Selectable ranges are `1Y`, `2Y`, `5Y`, `MAX` (default `5Y`). All ranges use **daily** bars; `MAX` goes back to 1970. Values are split- and dividend-adjusted closes, so there are no estimates, no smoothing, and no synthetic candles. The chart is downsampled to 600 points for rendering, but always keeps the peak, last-seen, and current points so no marker silently disappears.
@@ -55,7 +55,7 @@ Responses carry `X-Cache: HIT|MISS`. The server keeps a bounded in-memory LRU (2
   "lastSeenPrice": 5823.5,
   "calendarDaysLost": 221,
   "tradingDaysLost": 154,
-  "underwaterDays": 114,
+  "daysSincePeak": 114,
   "isAtHigh": false,
   "neverSeenLower": false,
   "series": [{ "date": "2020-06-12", "close": 3041.31 }], // trimmed

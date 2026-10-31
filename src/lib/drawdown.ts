@@ -13,7 +13,7 @@ export interface DrawdownResult {
   lastSeenPrice: number | null;
   calendarDaysLost: number | null;
   tradingDaysLost: number | null;
-  underwaterDays: number | null;
+  daysSincePeak: number | null;
   isAtHigh: boolean;
   neverSeenLower: boolean;
 }
@@ -56,7 +56,7 @@ export function calculateDrawdown(series: PricePoint[]): DrawdownResult {
       lastSeenPrice: current.close,
       calendarDaysLost: 0,
       tradingDaysLost: 0,
-      underwaterDays: 0,
+      daysSincePeak: 0,
       isAtHigh: true,
       neverSeenLower: false,
     };
@@ -83,7 +83,7 @@ export function calculateDrawdown(series: PricePoint[]): DrawdownResult {
       lastSeenPrice: null,
       calendarDaysLost: null,
       tradingDaysLost: null,
-      underwaterDays: daysBetween(peak.date, current.date),
+      daysSincePeak: daysBetween(peak.date, current.date),
       isAtHigh: false,
       neverSeenLower: true,
     };
@@ -103,7 +103,7 @@ export function calculateDrawdown(series: PricePoint[]): DrawdownResult {
     lastSeenPrice: lastSeen.close,
     calendarDaysLost: daysBetween(lastSeen.date, current.date),
     tradingDaysLost,
-    underwaterDays: daysBetween(peak.date, current.date),
+    daysSincePeak: daysBetween(peak.date, current.date),
     isAtHigh: false,
     neverSeenLower: false,
   };

@@ -20,7 +20,7 @@ export interface Stats {
   lastSeenPrice: number | null;
   calendarDaysLost: number | null;
   tradingDaysLost: number | null;
-  underwaterDays: number | null;
+  daysSincePeak: number | null;
   isAtHigh: boolean;
   neverSeenLower: boolean;
 }
@@ -168,13 +168,13 @@ export function StatsCards({ stats }: { stats: Stats }) {
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <span className="text-xs text-muted-foreground">Underwater</span>
+            <span className="text-xs text-muted-foreground">Days since peak</span>
             <span className="text-right">
               <span className="font-mono text-sm font-medium tabular-nums">
-                {fmtDays(stats.underwaterDays)}
+                {fmtDays(stats.daysSincePeak)}
               </span>
               <span className="block text-[11px] text-muted-foreground">
-                since peak
+                since {fmtDate(stats.peakDate)}
               </span>
             </span>
           </div>
