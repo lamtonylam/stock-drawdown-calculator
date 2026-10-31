@@ -1,5 +1,6 @@
 import YahooFinance from "yahoo-finance2";
 import type { PricePoint } from "./drawdown";
+import { friendlyExchange } from "./names";
 import type { RangeKey } from "./ranges";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -37,6 +38,8 @@ export interface SymbolResult {
   symbol: string;
   name: string;
   exchange: string;
+  /** Human venue name ("Helsinki") — falls back to `exchange` ("HEL"). */
+  exchangeDisp: string;
   type: string;
 }
 
@@ -51,9 +54,11 @@ export async function searchSymbols(
   const q = query.trim().slice(0, 60);
   if (!q) return [];
   const moduleOptions = signal ? { fetchOptions: { signal } } : {};
+  // Ask for more candidates than we show: Yahoo's ranking is flaky and
+  // regional listings (e.g. NOKIA.HE next to NOK) can sit below the cutoff.
   const res = await yf.search(
     q,
-    { quotesCount: 8, newsCount: 0 },
+    { quotesCount: 15, newsCount: 0 },
     moduleOptions
   );
   return (res.quotes ?? [])
@@ -75,6 +80,10 @@ export async function searchSymbols(
         symbol: r.symbol,
         name: r.shortname ?? r.longname ?? r.symbol,
         exchange: r.exchange ?? "",
+        exchangeDisp: friendlyExchange(
+          r.exchange ?? "",
+          (r as { exchDisp?: string }).exchDisp
+        ),
         type: r.typeDisp ?? r.quoteType ?? "",
       };
     })

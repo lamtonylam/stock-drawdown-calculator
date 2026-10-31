@@ -212,7 +212,7 @@ export default function Home() {
           </p>
         </header>
 
-        <Card className="gap-0 shadow-sm">
+        <Card className="gap-0 overflow-visible shadow-sm">
           <CardContent>
             <TickerForm
               ticker={ticker}

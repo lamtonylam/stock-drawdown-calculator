@@ -29,6 +29,7 @@ interface SymbolResult {
   symbol: string;
   name: string;
   exchange: string;
+  exchangeDisp: string;
   type: string;
 }
 
@@ -88,7 +89,11 @@ export function TickerForm({
       setSearching(true);
       const seq = ++searchSeq.current;
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        // Bypass the browser HTTP cache: a stale suggestion list is worse
+        // than an extra upstream request (already debounced + cached server-side).
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+          cache: "no-store",
+        });
         const json = await res.json();
         // A slower keystroke must not overwrite newer results.
         if (searchSeq.current !== seq) return;
@@ -201,7 +206,7 @@ export function TickerForm({
               id={listId}
               role="listbox"
               aria-label="Matching symbols"
-              className="absolute inset-x-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+              className="absolute inset-x-0 top-full z-50 mt-1.5 max-h-80 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-popover shadow-lg"
             >
               {results.map((s, i) => (
                 <li
@@ -225,7 +230,9 @@ export function TickerForm({
                         {s.name}
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
-                        {[s.exchange, s.type].filter(Boolean).join(" · ")}
+                        {[s.exchangeDisp || s.exchange, s.type]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     </span>
                     <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold">

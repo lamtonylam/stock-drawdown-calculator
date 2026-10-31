@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { friendlyName } from "./names";
+import { friendlyExchange, friendlyName } from "./names";
 
 describe("friendlyName", () => {
   it("maps indices to real names", () => {
@@ -17,8 +17,30 @@ describe("friendlyName", () => {
     expect(friendlyName("aapl")).toBe("Apple");
   });
 
+  it("maps OMX Helsinki listings", () => {
+    expect(friendlyName("NOKIA.HE")).toBe("Nokia");
+    expect(friendlyName("remedy.he")).toBe("Remedy Entertainment");
+    expect(friendlyName("KNEBV.HE")).toBe("Kone");
+  });
+
   it("falls back to the raw symbol", () => {
     expect(friendlyName("XYZ")).toBe("XYZ");
     expect(friendlyName("^UNKNOWN")).toBe("^UNKNOWN");
+  });
+});
+
+describe("friendlyExchange", () => {
+  it("prefers Yahoo's display name when it adds information", () => {
+    expect(friendlyExchange("NYQ", "NYSE")).toBe("NYSE");
+    expect(friendlyExchange("GER", "XETRA")).toBe("XETRA");
+  });
+
+  it("maps codes Yahoo leaves cryptic", () => {
+    expect(friendlyExchange("HEL", "HEL")).toBe("Helsinki");
+    expect(friendlyExchange("HEL", "")).toBe("Helsinki");
+  });
+
+  it("falls back to the raw code", () => {
+    expect(friendlyExchange("XYZ", "")).toBe("XYZ");
   });
 });

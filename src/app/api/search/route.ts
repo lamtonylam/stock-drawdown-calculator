@@ -3,10 +3,15 @@ import { searchSymbols, type SymbolResult } from "@/lib/yahoo";
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
-/** Search results change rarely — cacheable briefly at the edge. */
-const CACHE_CONTROL = "public, s-maxage=600, stale-while-revalidate=3600";
+/**
+ * Suggestions must stay fresh: Yahoo's ranking is flaky and a thin response
+ * (e.g. only the ADR, missing the home listing) must never stick around.
+ * Short server TTL, short edge TTL — and the client fetches with
+ * `cache: "no-store"` to bypass the browser cache entirely.
+ */
+const CACHE_CONTROL = "public, s-maxage=120, stale-while-revalidate=600";
 
-const CACHE_TTL_MS = 60 * 60 * 1000;
+const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;
 
 /** Letters, numbers, spaces and the punctuation real names use (&, ., -, /). */
