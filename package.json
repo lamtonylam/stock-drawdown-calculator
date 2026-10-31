@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -32,6 +35,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
     "shadcn": "^4.23.0",
     "tailwindcss": "^4",
     "typescript": "^5",

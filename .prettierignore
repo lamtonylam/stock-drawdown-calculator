@@ -1,0 +1,14 @@
+.next
+out
+build
+coverage
+.next
+node_modules
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+.next-env.d.ts
+next-env.d.ts
+*.tsbuildinfo
+.vitest
+public
