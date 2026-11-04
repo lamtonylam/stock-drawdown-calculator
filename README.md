@@ -30,7 +30,7 @@ Ticker and range live in the URL (`?ticker=NVDA&range=MAX`), so a view is sharea
 ## Backtesting a date
 
 Pick a **Backtest as of** date (or use a preset: Lehman '08, GFC,
-COVID, tariff, Iran war) to replay history: every stat is recalculated as if that day were
+COVID, tariff, Iran '26) to replay history: every stat is recalculated as if that day were
 today. E.g. `^GSPC` with `MAX` as of `2008-12-31` shows the S&P down ~38% from
 its Oct-2007 peak. While backtesting, ranges whose window can't show the crash
 are locked out for that date — a window must hold both the pre-crash peak and

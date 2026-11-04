@@ -25,5 +25,7 @@ export const BACKTEST_PRESETS = [
   { label: "GFC", date: "2009-03-09" },
   { label: "COVID", date: "2020-03-23" },
   { label: "Tariff", date: "2025-04-08" },
-  { label: "Iran war", date: "2025-06-20" },
+  // Bottom of the 2026 Iran war selloff (S&P 500 closed at 6343.72, its low
+  // for the whole drawdown; the war itself started 2026-02-28).
+  { label: "Iran '26", date: "2026-03-30" },
 ] as const;
