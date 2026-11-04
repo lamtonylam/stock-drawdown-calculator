@@ -123,14 +123,18 @@ describe("downsample", () => {
   it("drops an off-grid peak when no keep list is given (the old bug)", () => {
     // Rise to an odd-indexed peak, then fall — 1200 points stride by 2, so an
     // odd index never lands on the sampling grid.
-    const s = dense(1200, (i) => (i < 437 ? 100 + i * 0.1 : i === 437 ? 300 : 160));
+    const s = dense(1200, (i) =>
+      i < 437 ? 100 + i * 0.1 : i === 437 ? 300 : 160
+    );
     const { peakDate } = calculateDrawdown(s);
 
     expect(downsample(s, 600).some((p) => p.date === peakDate)).toBe(false);
   });
 
   it("always keeps peak, last-seen and current when passed as keep dates", () => {
-    const s = dense(1200, (i) => (i < 437 ? 100 + i * 0.1 : i === 437 ? 300 : 160));
+    const s = dense(1200, (i) =>
+      i < 437 ? 100 + i * 0.1 : i === 437 ? 300 : 160
+    );
     const { peakDate, lastSeenDate, currentDate } = calculateDrawdown(s);
 
     const out = downsample(s, 600, [peakDate, lastSeenDate, currentDate]);
@@ -154,8 +158,8 @@ describe("downsample", () => {
 
   it("ignores keep dates that are absent from the series", () => {
     const s = dense(1200, (i) => 100 + i);
-    expect(
-      downsample(s, 600, ["1999-01-01", null]).length
-    ).toBeLessThanOrEqual(602);
+    expect(downsample(s, 600, ["1999-01-01", null]).length).toBeLessThanOrEqual(
+      602
+    );
   });
 });

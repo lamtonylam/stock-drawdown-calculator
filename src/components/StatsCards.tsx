@@ -5,7 +5,13 @@ import {
   TrendingUpIcon,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { fmtDate, fmtDays, fmtPct, fmtPrice } from "@/lib/format";
+import {
+  fmtDate,
+  fmtDays,
+  fmtPct,
+  fmtPrice,
+  fmtTradingSessions,
+} from "@/lib/format";
 
 export interface Stats {
   ticker: string;
@@ -76,9 +82,7 @@ function StatCard({
         {sub && (
           <div
             className={`text-xs leading-relaxed ${
-              featured
-                ? "text-primary-foreground/60"
-                : "text-muted-foreground"
+              featured ? "text-primary-foreground/60" : "text-muted-foreground"
             }`}
           >
             {sub}
@@ -137,7 +141,9 @@ export function StatsCards({ stats }: { stats: Stats }) {
           value={fmtDays(stats.calendarDaysLost)}
           sub={
             stats.tradingDaysLost != null
-              ? `${stats.tradingDaysLost.toLocaleString()} trading sessions of progress`
+              ? stats.calendarDaysLost != null && stats.calendarDaysLost >= 365
+                ? `${stats.calendarDaysLost.toLocaleString()} days · ${fmtTradingSessions(stats.tradingDaysLost)} of progress`
+                : `${fmtTradingSessions(stats.tradingDaysLost)} of progress`
               : undefined
           }
         />
@@ -168,7 +174,9 @@ export function StatsCards({ stats }: { stats: Stats }) {
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <span className="text-xs text-muted-foreground">Days since peak</span>
+            <span className="text-xs text-muted-foreground">
+              Days since peak
+            </span>
             <span className="text-right">
               <span className="font-mono text-sm font-medium tabular-nums">
                 {fmtDays(stats.daysSincePeak)}
@@ -183,8 +191,8 @@ export function StatsCards({ stats }: { stats: Stats }) {
 
       {stats.neverSeenLower && (
         <p className="text-xs text-muted-foreground">
-          No close before the peak was this low — the time machine has nowhere to
-          go back to.
+          No close before the peak was this low — the time machine has nowhere
+          to go back to.
         </p>
       )}
     </div>

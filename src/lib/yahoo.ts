@@ -1,7 +1,8 @@
 import YahooFinance from "yahoo-finance2";
 import type { PricePoint } from "./drawdown";
+import { dayAfterAsOf } from "./asof";
 import { friendlyExchange } from "./names";
-import type { RangeKey } from "./ranges";
+import { period1ForRange, type RangeKey } from "./ranges";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -9,20 +10,8 @@ const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
  * Every range uses daily bars. `MAX` used to switch to weekly bars, which
  * silently turned "trading days of progress" into "weeks" and moved the peak to
  * a weekly close; Yahoo serves daily data back to 1970 in well under a second.
+ * Window starts come from `period1ForRange` in ranges.ts (single source).
  */
-const RANGE_TO_PERIOD: Record<RangeKey, string> = {
-  "1Y": daysAgo(365),
-  "2Y": daysAgo(730),
-  "5Y": daysAgo(1825),
-  MAX: "1970-01-01",
-};
-
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -90,18 +79,32 @@ export async function searchSymbols(
     .slice(0, 8);
 }
 
-/** Fetch adjusted daily closes from Yahoo Finance. */
+/**
+ * Fetch adjusted daily closes from Yahoo Finance.
+ * `asOf` (YYYY-MM-DD) backtests a past date: Yahoo is asked only for bars up
+ * to that day (its `period2` is exclusive, hence +1 day) and the series is
+ * defensively cut there too, so the drawdown math sees that day as "today".
+ */
 export async function fetchSeries(
   rawTicker: string,
   range: RangeKey,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  asOf?: string | null
 ): Promise<QuoteFetch> {
   const ticker = rawTicker.trim().toUpperCase() || "^GSPC";
-  const period1 = RANGE_TO_PERIOD[range] ?? RANGE_TO_PERIOD["5Y"];
+  const period1 = period1ForRange(range, asOf);
   const moduleOptions = signal ? { fetchOptions: { signal } } : {};
+  // `period2` must be omitted entirely on live requests: yahoo-finance2
+  // rejects the key when present-but-undefined. As a Date (not a bare
+  // YYYY-MM-DD string) so it satisfies the "date'ish" schema.
+  const chartOptions: { period1: string; period2?: Date; interval: "1d" } = {
+    period1,
+    interval: "1d",
+  };
+  if (asOf) chartOptions.period2 = new Date(`${dayAfterAsOf(asOf)}T00:00:00Z`);
 
   const [chart, info] = await Promise.all([
-    yf.chart(ticker, { period1, interval: "1d" }, moduleOptions),
+    yf.chart(ticker, chartOptions, moduleOptions),
     // Company name / currency are cosmetic — never fail the request over them.
     yf
       .quoteSummary(ticker, { modules: ["price"] }, moduleOptions)
@@ -117,15 +120,20 @@ export async function fetchSeries(
     }))
     .filter((p) => Number.isFinite(p.close) && p.close > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const capped = asOf ? series.filter((p) => p.date <= asOf) : series;
 
-  if (series.length < 2) {
-    throw new Error(`Not enough data for ${ticker} (check symbol)`);
+  if (capped.length < 2) {
+    throw new Error(
+      asOf
+        ? `Not enough data for ${ticker} on or before ${asOf}`
+        : `Not enough data for ${ticker} (check symbol)`
+    );
   }
 
   return {
     ticker,
     longName: price?.longName ?? price?.shortName ?? undefined,
     currency: price?.currency,
-    series,
+    series: capped,
   };
 }

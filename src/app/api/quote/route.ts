@@ -1,6 +1,20 @@
 import { NextResponse } from "next/server";
-import { calculateDrawdown, downsample, type DrawdownResult, type PricePoint } from "@/lib/drawdown";
-import { DEFAULT_RANGE, isRangeKey, type RangeKey } from "@/lib/ranges";
+import {
+  calculateDrawdown,
+  daysBetween,
+  downsample,
+  findLastSeenBefore,
+  type DrawdownResult,
+  type PricePoint,
+} from "@/lib/drawdown";
+import {
+  DEFAULT_RANGE,
+  isRangeKey,
+  period1ForRange,
+  RANGES,
+  type RangeKey,
+} from "@/lib/ranges";
+import { parseAsOf } from "@/lib/asof";
 import { fetchSeries } from "@/lib/yahoo";
 
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -24,6 +38,10 @@ export interface QuotePayload extends DrawdownResult {
   name: string;
   currency: string;
   range: RangeKey;
+  /** Requested backtest date (YYYY-MM-DD), or null for live. */
+  asOf: string | null;
+  /** Ranges whose window can show the crash (always all four when live). */
+  validRanges: RangeKey[];
   series: PricePoint[];
   /** Total closes in the range, before downsampling. */
   points: number;
@@ -103,7 +121,15 @@ export async function GET(req: Request) {
   const rangeRaw = (searchParams.get("range") ?? DEFAULT_RANGE).toUpperCase();
   const range: RangeKey = isRangeKey(rangeRaw) ? rangeRaw : DEFAULT_RANGE;
 
-  const key = `${ticker}:${range}`;
+  const { asOf, error: asOfError } = parseAsOf(searchParams.get("asof"));
+  if (asOfError) {
+    return NextResponse.json(
+      { error: asOfError },
+      { status: 400, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  const key = `${ticker}:${range}:${asOf ?? "live"}`;
   const hit = cacheGet(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     return NextResponse.json(hit.data, {
@@ -112,24 +138,95 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Backtests fetch full history once: the stats keep the requested
+    // window's contract, but range validity and the last-seen fallback need
+    // the whole past. Live mode keeps its windowed fetch untouched.
     const fetched = await fetchSeries(
       ticker,
-      range,
-      AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+      asOf ? "MAX" : range,
+      AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      asOf
     );
-    const stats = calculateDrawdown(fetched.series);
+    // Slice defensively: the fetcher already caps at `asOf`, but a mocked
+    // series may extend past it.
+    const history = asOf
+      ? fetched.series.filter((p) => p.date <= asOf)
+      : fetched.series;
+    if (history.length < 2) {
+      throw new Error(
+        asOf
+          ? `Not enough data for ${fetched.ticker} on or before ${asOf}`
+          : `Not enough data for ${fetched.ticker} (check symbol)`
+      );
+    }
+    const sliced =
+      asOf && range !== "MAX"
+        ? history.filter((p) => p.date >= period1ForRange(range, asOf))
+        : history;
+    if (sliced.length < 2) {
+      throw new Error(
+        `Not enough data for ${fetched.ticker} on or before ${asOf}`
+      );
+    }
+    let stats = calculateDrawdown(sliced);
+
+    // Ranges whose window misses the all-time peak or the time-machine date
+    // cannot show the crash — the client locks those options out for this
+    // date. MAX is always offered: nothing better exists when even full
+    // history has no lower close.
+    let validRanges: RangeKey[] = [...RANGES];
+    if (asOf) {
+      let maxPeak = history[0];
+      for (const p of history) {
+        if (p.close > maxPeak.close) maxPeak = p;
+      }
+      validRanges = RANGES.filter((rk) => {
+        if (rk === "MAX") return true;
+        const slice = history.filter(
+          (p) => p.date >= period1ForRange(rk, asOf)
+        );
+        if (slice.length < 2) return false;
+        const s = calculateDrawdown(slice);
+        return s.peakDate === maxPeak.date && !s.neverSeenLower;
+      });
+    }
+
+    // The window can miss the last-seen date even when it holds the peak
+    // (GFC on 3Y: $676 last traded in 1996). Look it up in full history
+    // rather than reporting a false "Never".
+    if (asOf && range !== "MAX" && stats.neverSeenLower) {
+      const seen = findLastSeenBefore(
+        history,
+        stats.peakDate,
+        stats.currentPrice
+      );
+      if (seen) {
+        const idx = history.findIndex((p) => p.date === seen.date);
+        stats = {
+          ...stats,
+          lastSeenDate: seen.date,
+          lastSeenPrice: seen.close,
+          calendarDaysLost: daysBetween(seen.date, stats.currentDate),
+          tradingDaysLost: history.length - 1 - idx,
+          neverSeenLower: false,
+        };
+      }
+    }
+
     const payload = {
       ticker: fetched.ticker,
       name: fetched.longName ?? fetched.ticker,
       currency: fetched.currency ?? "USD",
       range,
+      asOf,
+      validRanges,
       ...stats,
-      series: downsample(fetched.series, 600, [
+      series: downsample(sliced, 600, [
         stats.peakDate,
         stats.lastSeenDate,
         stats.currentDate,
       ]),
-      points: fetched.series.length,
+      points: sliced.length,
     };
 
     cacheSet(key, { at: Date.now(), data: payload });
@@ -142,10 +239,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json(
       {
-        error:
-          status === 504
-            ? "Yahoo Finance took too long to respond"
-            : msg,
+        error: status === 504 ? "Yahoo Finance took too long to respond" : msg,
       },
       { status, headers: { "Cache-Control": "no-store" } }
     );

@@ -2,7 +2,7 @@
 
 How far has a ticker fallen from its peak — and **when did it last trade this low?**
 
-Most drawdown charts tell you the percentage. This one also tells you the *date*: the most recent trading day, before the peak, when the price was at or below today's price. The gap between that day and today is how much progress the decline erased.
+Most drawdown charts tell you the percentage. This one also tells you the _date_: the most recent trading day, before the peak, when the price was at or below today's price. The gap between that day and today is how much progress the decline erased.
 
 Default ticker is `^GSPC` (S&P 500). Works with anything Yahoo Finance serves: `^NDX`, `^DJI`, `AAPL`, `NVDA`, `BTC-USD`, `EURUSD=X`, `005930.KS`, …
 
@@ -14,18 +14,31 @@ npm run dev
 
 ## What it shows
 
-| Stat | Meaning |
-| --- | --- |
-| Drawdown | `(current − peak) / peak`, from adjusted daily closes |
+| Stat               | Meaning                                                        |
+| ------------------ | -------------------------------------------------------------- |
+| Drawdown           | `(current − peak) / peak`, from adjusted daily closes          |
 | Last seen this low | Most recent close **before the peak** that was ≤ today's price |
-| Calendar days lost | Days between that date and today |
-| Trading days lost | Same span counted in closes in the series |
-| Days since peak | Calendar days since the peak |
-| Peak / current | Prices and dates behind the numbers |
+| Calendar days lost | Days between that date and today                               |
+| Trading days lost  | Same span counted in closes in the series                      |
+| Days since peak    | Calendar days since the peak                                   |
+| Peak / current     | Prices and dates behind the numbers                            |
 
-Selectable ranges are `1Y`, `2Y`, `5Y`, `MAX` (default `5Y`). All ranges use **daily** bars; `MAX` goes back to 1970. Values are split- and dividend-adjusted closes, so there are no estimates, no smoothing, and no synthetic candles. The chart is downsampled to 600 points for rendering, but always keeps the peak, last-seen, and current points so no marker silently disappears.
+Selectable ranges are `1Y`, `3Y`, `5Y`, `MAX` (default `5Y`). All ranges use **daily** bars; `MAX` goes back to 1970. Values are split- and dividend-adjusted closes, so there are no estimates, no smoothing, and no synthetic candles. The chart is downsampled to 600 points for rendering, but always keeps the peak, last-seen, and current points so no marker silently disappears.
 
 Ticker and range live in the URL (`?ticker=NVDA&range=MAX`), so a view is shareable — the Share button copies the current link.
+
+## Backtesting a date
+
+Pick a **Backtest as of** date (or use a preset: Lehman '08, GFC,
+COVID, tariff, Iran war) to replay history: every stat is recalculated as if that day were
+today. E.g. `^GSPC` with `MAX` as of `2008-12-31` shows the S&P down ~38% from
+its Oct-2007 peak. While backtesting, ranges whose window can't show the crash
+are locked out for that date — a window must hold both the pre-crash peak and
+the last time it traded that low (GFC offers Max only, since $676 last traded
+in 1996). When the window holds the peak but misses the low, the date is still
+found in full history rather than reporting "Never". The date picker caps at today, weekends resolve to the
+previous close (shown next to the badge), and the backtest date is part of the
+URL (`?ticker=^GSPC&range=MAX&asof=2008-12-31`) so results stay shareable.
 
 ## API
 
@@ -59,7 +72,7 @@ Responses carry `X-Cache: HIT|MISS`. The server keeps a bounded in-memory LRU (2
   "isAtHigh": false,
   "neverSeenLower": false,
   "series": [{ "date": "2020-06-12", "close": 3041.31 }], // trimmed
-  "points": 1258
+  "points": 1258,
 }
 ```
 
@@ -123,6 +136,6 @@ Any Node host works. Keep it on Node 20+, and prefer the Docker image or `output
 
 - Data comes from Yahoo Finance via `yahoo-finance2`, unauthenticated and unofficial. It can lag, gap, or rate-limit.
 - `MAX` on very liquid tickers returns tens of thousands of daily closes; the first request is slower than later cached ones.
-- Drawdown is measured against the highest close *in the selected range*, so the same ticker at `1Y` and `MAX` can report different peaks — that is intended, and stated in the footer.
+- Drawdown is measured against the highest close _in the selected range_, so the same ticker at `1Y` and `MAX` can report different peaks — that is intended, and stated in the footer.
 
 Not financial advice.

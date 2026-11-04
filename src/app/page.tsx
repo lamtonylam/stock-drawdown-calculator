@@ -29,24 +29,29 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { PricePoint } from "@/lib/drawdown";
+import { parseAsOf } from "@/lib/asof";
 import { fmtDate, fmtPct } from "@/lib/format";
 import { friendlyName } from "@/lib/names";
-import { DEFAULT_RANGE, isRangeKey, type RangeKey } from "@/lib/ranges";
+import { DEFAULT_RANGE, isRangeKey, RANGES, type RangeKey } from "@/lib/ranges";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
 interface ApiResponse extends Stats {
   range: string;
+  asOf: string | null;
+  validRanges: RangeKey[];
   series: PricePoint[];
   points: number;
 }
 
-function initialFromUrl(): { t: string; r: RangeKey } {
-  if (typeof window === "undefined") return { t: "^GSPC", r: DEFAULT_RANGE };
+function initialFromUrl(): { t: string; r: RangeKey; asOf: string } {
+  if (typeof window === "undefined")
+    return { t: "^GSPC", r: DEFAULT_RANGE, asOf: "" };
   const params = new URLSearchParams(window.location.search);
   const t = params.get("ticker") || "^GSPC";
   const raw = (params.get("range") ?? DEFAULT_RANGE).toUpperCase();
-  return { t, r: isRangeKey(raw) ? raw : DEFAULT_RANGE };
+  const { asOf } = parseAsOf(params.get("asof"));
+  return { t, r: isRangeKey(raw) ? raw : DEFAULT_RANGE, asOf: asOf ?? "" };
 }
 
 function ResultsSkeleton() {
@@ -67,61 +72,85 @@ export default function Home() {
   const [ticker, setTicker] = useState("^GSPC");
   const [range, setRange] = useState<RangeKey>(DEFAULT_RANGE);
   const [draft, setDraft] = useState("^GSPC");
+  const [asOf, setAsOf] = useState("");
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlightRef = useRef<AbortController | null>(null);
 
-  const fetchData = useCallback(async (t: string, r: RangeKey) => {
-    // Cancel the previous request: a slow 1Y response used to land after a newer
-    // MAX one and overwrite both the data and the URL, leaving the toggle and
-    // the chart disagreeing. It also cleared the newer request's spinner.
-    inFlightRef.current?.abort();
-    const controller = new AbortController();
-    inFlightRef.current = controller;
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+  const fetchData = useCallback(
+    async (
+      t: string,
+      r: RangeKey,
+      asOfDate = ""
+    ): Promise<ApiResponse | null> => {
+      // Cancel the previous request: a slow 1Y response used to land after a newer
+      // MAX one and overwrite both the data and the URL, leaving the toggle and
+      // the chart disagreeing. It also cleared the newer request's spinner.
+      inFlightRef.current?.abort();
+      const controller = new AbortController();
+      inFlightRef.current = controller;
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, REQUEST_TIMEOUT_MS);
 
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/quote?ticker=${encodeURIComponent(t)}&range=${r}`,
-        { signal: controller.signal }
-      );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to load");
-      setData(json as ApiResponse);
-      const url = new URL(window.location.href);
-      url.searchParams.set("ticker", t);
-      url.searchParams.set("range", r);
-      window.history.replaceState(null, "", url.toString());
-    } catch (e) {
-      // A superseded request must stay silent — a newer one owns the UI state.
-      if (inFlightRef.current !== controller) return;
-      if (timedOut) {
-        setError("Request timed out — check your connection and try again");
-        return;
+      setLoading(true);
+      setError(null);
+      try {
+        const qs = `/api/quote?ticker=${encodeURIComponent(t)}&range=${r}${asOfDate ? `&asof=${asOfDate}` : ""}`;
+        const res = await fetch(qs, { signal: controller.signal });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "Failed to load");
+        setData(json as ApiResponse);
+        const url = new URL(window.location.href);
+        url.searchParams.set("ticker", t);
+        url.searchParams.set("range", r);
+        if (asOfDate) url.searchParams.set("asof", asOfDate);
+        else url.searchParams.delete("asof");
+        window.history.replaceState(null, "", url.toString());
+        return json as ApiResponse;
+      } catch (e) {
+        // A superseded request must stay silent — a newer one owns the UI state.
+        if (inFlightRef.current !== controller) return null;
+        if (timedOut) {
+          setError("Request timed out — check your connection and try again");
+          return null;
+        }
+        setError(e instanceof Error ? e.message : "Failed to load");
+        return null;
+      } finally {
+        clearTimeout(timer);
+        if (inFlightRef.current === controller) {
+          inFlightRef.current = null;
+          setLoading(false);
+        }
       }
-      setError(e instanceof Error ? e.message : "Failed to load");
-    } finally {
-      clearTimeout(timer);
-      if (inFlightRef.current === controller) {
-        inFlightRef.current = null;
-        setLoading(false);
-      }
-    }
-  }, []);
+    },
+    []
+  );
 
   const handleSubmit = useCallback(
-    async (t: string, r: RangeKey) => {
+    async (t: string, r: RangeKey, asOfDate: string = "") => {
       setTicker(t);
       setRange(r);
       setDraft(t);
-      await fetchData(t, r);
+      setAsOf(asOfDate);
+      const data = await fetchData(t, r, asOfDate);
+      // Dynamic lockout: the server reports which ranges can show this crash.
+      // If the requested one can't, switch to the smallest valid range and
+      // fetch once more (validRanges always includes MAX, so this ends here).
+      if (
+        data &&
+        asOfDate &&
+        Array.isArray(data.validRanges) &&
+        !data.validRanges.includes(r)
+      ) {
+        const next = RANGES.find((x) => data.validRanges.includes(x)) ?? "MAX";
+        setRange(next);
+        await fetchData(t, next, asOfDate);
+      }
     },
     [fetchData]
   );
@@ -135,8 +164,8 @@ export default function Home() {
     // would cascade renders, and trips react-hooks/set-state-in-effect). The
     // timer also means an immediate unmount cancels cleanly — there is no
     // "already initialised" ref, so dev StrictMode's second mount still fires.
-    const { t, r } = initialFromUrl();
-    const timer = setTimeout(() => void handleSubmit(t, r), 0);
+    const { t, r, asOf: initialAsOf } = initialFromUrl();
+    const timer = setTimeout(() => void handleSubmit(t, r, initialAsOf), 0);
     return () => {
       clearTimeout(timer);
       inFlightRef.current?.abort();
@@ -220,6 +249,13 @@ export default function Home() {
               draft={draft}
               onDraftChange={setDraft}
               loading={loading}
+              asOf={asOf}
+              onAsOfChange={setAsOf}
+              validRanges={
+                data && data.asOf === asOf && Array.isArray(data.validRanges)
+                  ? data.validRanges
+                  : null
+              }
               onSubmit={handleSubmit}
             />
           </CardContent>
@@ -254,13 +290,23 @@ export default function Home() {
                     {data.ticker}
                   </Badge>
                   <Badge variant="outline">{data.range}</Badge>
+                  {data.asOf && (
+                    <Badge
+                      variant="default"
+                      title={`Backtested as of ${data.asOf}`}
+                    >
+                      Backtest {data.asOf}
+                    </Badge>
+                  )}
                   <span className="text-xs text-muted-foreground">
                     {data.points.toLocaleString()} closes · {data.currency}
                   </span>
                 </div>
               </div>
               <span className="text-xs text-muted-foreground">
-                as of {fmtDate(data.currentDate)}
+                {data.asOf && data.asOf !== data.currentDate
+                  ? `backtest ${fmtDate(data.asOf)} · last close ${fmtDate(data.currentDate)}`
+                  : `as of ${fmtDate(data.currentDate)}${data.asOf ? " · backtest" : ""}`}
               </span>
             </div>
 
@@ -290,9 +336,9 @@ export default function Home() {
               <span>
                 Peak = highest close in the selected range (adjusted for splits
                 and dividends). The time-machine date is the most recent day{" "}
-                <em>before the peak</em> when price was at or below today&apos;s
-                price. Data: Yahoo Finance via yahoo-finance2. Not financial
-                advice.
+                <em>before the peak</em> when price was at or below{" "}
+                {data.asOf ? "the backtest date's" : "today's"} price. Data:
+                Yahoo Finance via yahoo-finance2. Not financial advice.
               </span>
             </p>
           </section>

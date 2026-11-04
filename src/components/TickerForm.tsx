@@ -25,6 +25,15 @@ const PRESETS = ["^GSPC", "^NDX", "^DJI", "AAPL", "NVDA", "BTC-USD"].map(
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
 
+/** One-click crash dates for backtesting — all from the 2008 crisis. */
+const BACKTEST_PRESETS = [
+  { label: "Lehman '08", date: "2008-09-15" },
+  { label: "GFC", date: "2009-03-09" },
+  { label: "COVID", date: "2020-03-23" },
+  { label: "Tariff", date: "2025-04-08" },
+  { label: "Iran war", date: "2025-06-20" },
+];
+
 interface SymbolResult {
   symbol: string;
   name: string;
@@ -39,6 +48,9 @@ export function TickerForm({
   draft,
   onDraftChange,
   loading,
+  asOf,
+  onAsOfChange,
+  validRanges,
   onSubmit,
 }: {
   ticker: string;
@@ -46,7 +58,12 @@ export function TickerForm({
   draft: string;
   onDraftChange: (value: string) => void;
   loading: boolean;
-  onSubmit: (ticker: string, range: RangeKey) => void;
+  /** Backtest date (YYYY-MM-DD); "" means live. */
+  asOf: string;
+  onAsOfChange: (value: string) => void;
+  /** Ranges that can show the crash; null means all (live or not yet known). */
+  validRanges: RangeKey[] | null;
+  onSubmit: (ticker: string, range: RangeKey, asOf: string) => void;
 }) {
   const [results, setResults] = useState<SymbolResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -133,7 +150,7 @@ export function TickerForm({
     setHighlight(-1);
   };
 
-  const submit = (r: RangeKey = range) => {
+  const submit = (r: RangeKey = range, asOfDate: string = asOf) => {
     // Prefer the top suggestion — typing "apple" + Enter resolves to AAPL
     // instead of sending the raw text as a (bogus) ticker. Uses `results`
     // rather than `open` so Escape-to-hide followed by Enter still resolves.
@@ -142,13 +159,25 @@ export function TickerForm({
         ? results[Math.max(highlight, 0)].symbol
         : draft.trim().toUpperCase() || "^GSPC";
     dismiss();
-    onSubmit(pick, r);
+    onSubmit(pick, r, asOfDate);
   };
 
   const choose = (s: SymbolResult) => {
     dismiss();
-    onSubmit(s.symbol, range);
+    onSubmit(s.symbol, range, asOf);
   };
+
+  // `new Date()` must not run during render: this route is prerendered and
+  // Next.js treats current-time reads in a Client Component as unstable.
+  // The picker's cap is set after mount instead — deferred via a task, the
+  // same pattern as page.tsx's kick-off (avoids set-state-in-effect).
+  const [today, setToday] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setToday(new Date().toISOString().slice(0, 10));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <div className="flex flex-col gap-3">
@@ -269,15 +298,28 @@ export function TickerForm({
             if (v) submit(v as RangeKey);
           }}
         >
-          {RANGE_OPTIONS.map((r) => (
-            <ToggleGroupItem
-              key={r.value}
-              value={r.value}
-              className="min-w-11 px-2.5 text-xs font-medium"
-            >
-              {r.label}
-            </ToggleGroupItem>
-          ))}
+          {RANGE_OPTIONS.map((r) => {
+            // Dynamic lockout: the server reports per backtest date which
+            // windows can show the crash (peak inside). Non-array (a stale
+            // cached payload predating the field) means all enabled.
+            const lockedOut =
+              Array.isArray(validRanges) && !validRanges.includes(r.value);
+            return (
+              <ToggleGroupItem
+                key={r.value}
+                value={r.value}
+                disabled={lockedOut}
+                title={
+                  lockedOut
+                    ? "Can't show this crash — window starts after the peak"
+                    : undefined
+                }
+                className="min-w-11 px-2.5 text-xs font-medium"
+              >
+                {r.label}
+              </ToggleGroupItem>
+            );
+          })}
         </ToggleGroup>
 
         <Separator orientation="vertical" className="hidden h-5 sm:block" />
@@ -292,7 +334,74 @@ export function TickerForm({
               title={p.symbol}
               aria-pressed={ticker === p.symbol}
               onClick={() => {
-                onSubmit(p.symbol, range);
+                onSubmit(p.symbol, range, asOf);
+              }}
+              className="text-[11px] text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-2.5">
+        <label
+          htmlFor="backtest-date"
+          className="text-xs font-medium text-muted-foreground"
+        >
+          Backtest as of
+        </label>
+        <Input
+          id="backtest-date"
+          type="date"
+          value={asOf}
+          min="1970-01-01"
+          max={today || undefined}
+          onChange={(e) => {
+            const v = e.target.value;
+            onAsOfChange(v);
+            // Native date inputs yield "" or a full YYYY-MM-DD, so it is
+            // safe to recalculate immediately — no half-typed states.
+            if (v) {
+              if (/^\d{4}-\d{2}-\d{2}$/.test(v)) submit(range, v);
+            } else {
+              submit(range, "");
+            }
+          }}
+          className="h-8 w-auto text-xs"
+          aria-label="Backtest as of date"
+        />
+        {asOf ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              onAsOfChange("");
+              submit(range, "");
+            }}
+            className="text-[11px] text-muted-foreground"
+          >
+            Clear · back to live
+          </Button>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">
+            live — pick a date to replay a crash
+          </span>
+        )}
+        <Separator orientation="vertical" className="hidden h-5 sm:block" />
+        <div className="flex flex-wrap gap-1">
+          {BACKTEST_PRESETS.map((p) => (
+            <Button
+              key={p.date}
+              type="button"
+              variant="ghost"
+              size="xs"
+              title={p.date}
+              aria-pressed={asOf === p.date}
+              onClick={() => {
+                onAsOfChange(p.date);
+                submit(range, p.date);
               }}
               className="text-[11px] text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
             >

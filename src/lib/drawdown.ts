@@ -18,10 +18,33 @@ export interface DrawdownResult {
   neverSeenLower: boolean;
 }
 
-function daysBetween(a: string, b: string): number {
+export function daysBetween(a: string, b: string): number {
   const ms =
     new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime();
   return Math.round(ms / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Most recent point dated before `peakDate` with close at or below `price`.
+ * Order-independent, so it works on any slice of history — used both for the
+ * in-window lookup and the full-history fallback on backtests.
+ */
+export function findLastSeenBefore(
+  series: PricePoint[],
+  peakDate: string,
+  price: number
+): PricePoint | null {
+  let best: PricePoint | null = null;
+  for (const p of series) {
+    if (
+      p.date < peakDate &&
+      p.close <= price &&
+      (!best || p.date > best.date)
+    ) {
+      best = p;
+    }
+  }
+  return best;
 }
 
 /**
@@ -42,8 +65,7 @@ export function calculateDrawdown(series: PricePoint[]): DrawdownResult {
   }
 
   const drawdownPct = (current.close - peak.close) / peak.close;
-  const isAtHigh =
-    current.date === peak.date || Math.abs(drawdownPct) < 1e-9;
+  const isAtHigh = current.date === peak.date || Math.abs(drawdownPct) < 1e-9;
 
   if (isAtHigh) {
     return {
@@ -62,15 +84,8 @@ export function calculateDrawdown(series: PricePoint[]): DrawdownResult {
     };
   }
 
-  // Walk backwards from peak to find last date with close <= current
-  const beforePeak = sorted.filter((p) => p.date < peak.date);
-  let lastSeen: PricePoint | null = null;
-  for (let i = beforePeak.length - 1; i >= 0; i--) {
-    if (beforePeak[i].close <= current.close) {
-      lastSeen = beforePeak[i];
-      break;
-    }
-  }
+  // Most recent date before the peak with close <= current
+  const lastSeen = findLastSeenBefore(sorted, peak.date, current.close);
 
   if (!lastSeen) {
     return {
@@ -127,7 +142,9 @@ export function downsample(
 ): PricePoint[] {
   if (series.length <= maxPoints) return series;
 
-  const keepDates = new Set(keep.filter((d): d is string => typeof d === "string"));
+  const keepDates = new Set(
+    keep.filter((d): d is string => typeof d === "string")
+  );
   const picked = new Set<number>();
   const step = series.length / maxPoints;
 

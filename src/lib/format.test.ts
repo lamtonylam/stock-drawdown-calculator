@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fmtDate, fmtDays, fmtPct, fmtPrice } from "./format";
+import {
+  fmtDate,
+  fmtDays,
+  fmtPct,
+  fmtPrice,
+  fmtTradingSessions,
+} from "./format";
 
 describe("format helpers", () => {
   it("formats percentages", () => {
@@ -27,5 +33,20 @@ describe("format helpers", () => {
     expect(fmtDays(0)).toBe("0 days");
     expect(fmtDays(1)).toBe("1 day");
     expect(fmtDays(271)).toBe("271 days");
+    expect(fmtDays(364)).toBe("364 days");
+  });
+
+  it("formats long spans as years", () => {
+    expect(fmtDays(365)).toBe("1 year");
+    expect(fmtDays(400)).toBe("1.1 years");
+    expect(fmtDays(730)).toBe("2 years");
+    expect(fmtDays(5000)).toContain("year");
+  });
+
+  it("formats trading sessions with year hint", () => {
+    expect(fmtTradingSessions(null)).toBe("—");
+    expect(fmtTradingSessions(100)).toBe("100 sessions");
+    expect(fmtTradingSessions(500)).toContain("sessions");
+    expect(fmtTradingSessions(500)).toContain("y)");
   });
 });

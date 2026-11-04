@@ -30,5 +30,17 @@ export function fmtDate(iso: string): string {
 
 export function fmtDays(n: number | null): string {
   if (n == null) return "—";
-  return `${n.toLocaleString()} day${n === 1 ? "" : "s"}`;
+  if (n < 365) return `${n.toLocaleString()} day${n === 1 ? "" : "s"}`;
+  const years = n / 365.25;
+  const rounded = years.toFixed(1).replace(/\.0$/, "");
+  return `${rounded} year${rounded === "1" ? "" : "s"}`;
+}
+
+/** Trading sessions: exact count, with a year approximation past ~1.5yw. */
+export function fmtTradingSessions(n: number | null): string {
+  if (n == null) return "—";
+  const exact = `${n.toLocaleString()} session${n === 1 ? "" : "s"}`;
+  if (n < 365) return exact;
+  const years = (n / 252).toFixed(1).replace(/\.0$/, "");
+  return `${exact} (~${years}y)`;
 }
