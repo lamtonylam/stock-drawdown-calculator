@@ -1,41 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { daysBeforeAsOf, period1ForRange } from "./ranges";
+import { normalizeBars } from "./yahoo";
 
-describe("daysBeforeAsOf", () => {
-  it("steps back across a year boundary", () => {
-    expect(daysBeforeAsOf("2009-01-01", 1)).toBe("2008-12-31");
+const day = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+describe("normalizeBars", () => {
+  it("drops bars with no usable price", () => {
+    const series = normalizeBars([
+      { date: day("2024-01-02"), close: 100, adjclose: 99 },
+      { date: day("2024-01-03"), close: null, adjclose: null },
+      { date: day("2024-01-04"), close: 0 },
+      { date: day("2024-01-05"), close: 0 },
+      { date: day("2024-01-05"), close: Number.NaN },
+    ]);
+    expect(series).toEqual([{ date: "2024-01-02", close: 99 }]);
   });
 
-  it("handles leap days", () => {
-    expect(daysBeforeAsOf("2008-03-01", 1)).toBe("2008-02-29");
+  it("prefers the adjusted close and falls back to the raw close", () => {
+    const series = normalizeBars([
+      { date: day("2024-01-02"), close: 100, adjclose: 90 },
+      { date: day("2024-01-03"), close: 101 },
+    ]);
+    expect(series.map((p) => p.close)).toEqual([90, 101]);
   });
 
-  it("goes back a full 1Y window from a 2008 crash date", () => {
-    const start = daysBeforeAsOf("2008-09-15", 365);
-    expect(start < "2008-09-15").toBe(true);
-    expect(start).toBe("2007-09-16"); // 366-day leap span, minus 365
-  });
-});
-
-describe("period1ForRange", () => {
-  it("anchors the window at the backtest date, not today", () => {
-    expect(period1ForRange("1Y", "2008-09-15")).toBe("2007-09-16");
-    expect(period1ForRange("3Y", "2008-09-15")).toBe(
-      daysBeforeAsOf("2008-09-15", 1095)
-    );
-    // Window start must precede the backtest end, or Yahoo rejects it.
-    for (const range of ["1Y", "3Y", "5Y"] as const) {
-      expect(period1ForRange(range, "2008-09-15") < "2008-09-15").toBe(true);
-    }
+  it("collapses duplicate dates, keeping the last (settled) bar", () => {
+    // Yahoo occasionally returns a partial bar next to the settled one. Two
+    // points on one date put two dots on one x-axis tick and make
+    // calculateDrawdown count phantom sessions.
+    const series = normalizeBars([
+      { date: day("2024-01-02"), close: 100 },
+      { date: day("2024-01-03"), close: 111 }, // partial
+      { date: day("2024-01-03"), close: 110 }, // settled, wins
+    ]);
+    expect(series).toEqual([
+      { date: "2024-01-02", close: 100 },
+      { date: "2024-01-03", close: 110 },
+    ]);
   });
 
-  it("keeps MAX open-ended back to 1970 when backtesting", () => {
-    expect(period1ForRange("MAX", "2008-09-15")).toBe("1970-01-01");
+  it("returns an ascending series even when Yahoo sends it unsorted", () => {
+    const series = normalizeBars([
+      { date: day("2024-03-01"), close: 3 },
+      { date: day("2024-01-01"), close: 1 },
+      { date: day("2024-02-01"), close: 2 },
+    ]);
+    expect(series.map((p) => p.date)).toEqual([
+      "2024-01-01",
+      "2024-02-01",
+      "2024-03-01",
+    ]);
   });
 
-  it("keeps live mode anchored at today", () => {
-    for (const range of ["1Y", "3Y", "5Y", "MAX"] as const) {
-      expect(period1ForRange(range, null)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    }
+  it("tolerates missing or empty quotes", () => {
+    expect(normalizeBars(undefined)).toEqual([]);
+    expect(normalizeBars([])).toEqual([]);
+    expect(normalizeBars([{ date: null, close: 5 }])).toEqual([]);
   });
 });

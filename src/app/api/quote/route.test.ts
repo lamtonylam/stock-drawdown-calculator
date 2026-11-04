@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PricePoint } from "@/lib/drawdown";
+import { noDataMessage } from "@/lib/errors";
 
 const { fetchSeriesMock } = vi.hoisted(() => ({ fetchSeriesMock: vi.fn() }));
 
 vi.mock("@/lib/yahoo", () => ({ fetchSeries: fetchSeriesMock }));
 
-const { GET, normalizeTicker, statusForUpstreamError } =
-  await import("./route");
+const {
+  GET,
+  historyCache,
+  normalizeTicker,
+  quoteCache,
+  statusForUpstreamError,
+} = await import("./route");
 
 function req(qs: string): Request {
   return new Request(`http://localhost/api/quote${qs}`);
@@ -24,6 +30,10 @@ function denseSeries(): PricePoint[] {
 
 beforeEach(() => {
   fetchSeriesMock.mockReset();
+  // The caches are module state: without this, one case's HIT is another's
+  // MISS and the order of the suite decides the result.
+  quoteCache.clear();
+  historyCache.clear();
 });
 
 describe("normalizeTicker", () => {
@@ -76,6 +86,23 @@ describe("statusForUpstreamError", () => {
       statusForUpstreamError("getaddrinfo ENOTFOUND query1.finance.yahoo.com")
     ).toBe(502);
     expect(statusForUpstreamError("Fetch failed")).toBe(502);
+  });
+
+  it("does not read a transport failure as a bad symbol", () => {
+    // A loose /not found/ used to turn these into 404s, blaming the caller for
+    // an outage and hiding it from 5xx monitoring.
+    expect(statusForUpstreamError("dial tcp 1.2.3.4:443: host not found")).toBe(
+      502
+    );
+    expect(statusForUpstreamError("Invalid URL")).toBe(502);
+    expect(statusForUpstreamError("socket hang up")).toBe(502);
+  });
+
+  it("maps the shared no-data message to 404", () => {
+    expect(statusForUpstreamError(noDataMessage("^GSPC", "2009-03-09"))).toBe(
+      404
+    );
+    expect(statusForUpstreamError(noDataMessage("^GSPC", null))).toBe(404);
   });
 });
 
@@ -230,6 +257,62 @@ describe("GET /api/quote", () => {
     expect(body.neverSeenLower).toBe(false);
     expect(body.lastSeenDate).toBe("1996-09-12");
     expect(body.tradingDaysLost).toBe(4);
+
+    // That date predates the 3Y window, so it cannot be a point on the chart.
+    // The client detects this (see DrawdownChart) and says "before this
+    // window" instead of drawing a legend swatch for a dot that is missing.
+    const dates = body.series.map((p: PricePoint) => p.date);
+    expect(dates).not.toContain(body.lastSeenDate);
+  });
+
+  it("keeps the last-seen marker when it does fall inside the window", async () => {
+    // Short history: the peak and the earlier low are both in the 5Y window,
+    // so the marker must survive downsampling.
+    fetchSeriesMock.mockResolvedValue({
+      ticker: "AAPL",
+      currency: "USD",
+      series: [
+        { date: "2023-01-03", close: 130 },
+        { date: "2024-01-02", close: 185 },
+        { date: "2024-06-03", close: 190 },
+        { date: "2024-12-02", close: 132 },
+      ],
+    });
+
+    const body = await (await GET(req("?ticker=AAPL&range=5Y"))).json();
+    const dates = body.series.map((p: PricePoint) => p.date);
+    expect(body.lastSeenDate).toBe("2023-01-03");
+    expect(dates).toContain(body.lastSeenDate);
+    expect(dates).toContain(body.peakDate);
+    expect(dates).toContain(body.currentDate);
+  });
+
+  it("reuses one full-history fetch across ranges of the same backtest date", async () => {
+    // Backtests always pull MAX, so the range only slices what came back.
+    // Without a range-independent cache, 3Y → MAX → 5Y was three identical
+    // ~14k-bar downloads of the same symbol and date.
+    fetchSeriesMock.mockResolvedValue({
+      ticker: "^GSPC",
+      currency: "USD",
+      series: [
+        { date: "2007-10-09", close: 1565 },
+        { date: "2008-09-15", close: 1255 },
+        { date: "2009-03-09", close: 676 },
+      ],
+    });
+
+    for (const range of ["1Y", "3Y", "5Y", "MAX"]) {
+      const res = await GET(
+        req(`?ticker=%5EGSPC&range=${range}&asof=2009-03-09`)
+      );
+      expect(res.status).toBe(200);
+    }
+
+    expect(fetchSeriesMock).toHaveBeenCalledOnce();
+    expect(fetchSeriesMock.mock.calls[0][1]).toBe("MAX");
+    // Every range still gets its own cached *response*.
+    expect(quoteCache.size).toBe(4);
+    expect(historyCache.size).toBe(1);
   });
 
   it("404s when nothing traded on or before the backtest date", async () => {

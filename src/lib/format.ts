@@ -36,11 +36,25 @@ export function fmtDays(n: number | null): string {
   return `${rounded} year${rounded === "1" ? "" : "s"}`;
 }
 
-/** Trading sessions: exact count, with a year approximation past ~1.5yw. */
+/** Trading sessions: exact count, with a year approximation past one year. */
 export function fmtTradingSessions(n: number | null): string {
   if (n == null) return "—";
   const exact = `${n.toLocaleString()} session${n === 1 ? "" : "s"}`;
   if (n < 365) return exact;
   const years = (n / 252).toFixed(1).replace(/\.0$/, "");
   return `${exact} (~${years}y)`;
+}
+
+/**
+ * Headline for the "at high" card.
+ *
+ * `isAtHigh` compares the current close with the peak **inside the selected
+ * range** (see `calculateDrawdown`), so only `MAX` justifies the words
+ * "all-time high". A 1Y window can top out well below the real record, and the
+ * old copy claimed one anyway.
+ */
+export function atHighTitle(ticker: string, range: string): string {
+  return range === "MAX"
+    ? `${ticker} is at an all-time high`
+    : `${ticker} is at its highest close in ${range}`;
 }

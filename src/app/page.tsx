@@ -37,7 +37,7 @@ import { DEFAULT_RANGE, isRangeKey, RANGES, type RangeKey } from "@/lib/ranges";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 interface ApiResponse extends Stats {
-  range: string;
+  /** Not redeclared: `Stats` already carries the selected window. */
   asOf: string | null;
   validRanges: RangeKey[];
   series: PricePoint[];

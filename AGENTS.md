@@ -65,9 +65,12 @@ src/
    ├─ ranges.ts             # RANGES + period1ForRange (single source of truth)
    ├─ asof.ts               # parseAsOf / dayAfterAsOf / MIN_ASOF (shared client+server)
    ├─ asof.test.ts
-   ├─ yahoo.ts              # fetchSeries + searchSymbols (server-side only)
+   ├─ yahoo.ts              # fetchSeries + normalizeBars + searchSymbols (server-side only)
    ├─ yahoo.test.ts
-   ├─ format.ts             # fmtPct / fmtPrice / fmtDate / fmtDays
+   ├─ lru.ts                # createLru — the ONE cache implementation (both routes)
+   ├─ errors.ts             # noDataMessage — wording both layers must agree on
+   ├─ presets.ts            # PRESETS + BACKTEST_PRESETS (data, not component state)
+   ├─ format.ts             # fmtPct / fmtPrice / fmtDate / atHighTitle
    ├─ names.ts              # friendlyName / friendlyExchange
    └─ utils.ts
 ```
@@ -100,7 +103,12 @@ Path alias: `@/*` → `./src/*` (mirrored in both `tsconfig.json` and
   - `neverSeenLower` when no pre-peak close was that low.
 - **`downsample(series, 600, [peakDate, lastSeenDate, currentDate])`** must
   always keep the marker dates plus first/last points, or chart markers
-  silently vanish on long series.
+  silently vanish on long series. Note the one case it _cannot_ honour: a
+  backtest whose `lastSeenDate` comes from the full-history fallback can sit
+  **outside** `sliced`, so it is not in `series` at all. `DrawdownChart` must
+  then say "before this window" instead of drawing a legend swatch for a dot
+  that isn't there — never render a legend from `lastSeenDate` alone, always
+  from the point resolved in `series`.
 - **`src/lib/asof.ts` is shared** by client (`page.tsx` URL parsing) and
   server (route validation). `parseAsOf` treats empty as live (never an
   error); non-`YYYY-MM-DD`, non-real dates, `< 1970-01-01`, or future dates
@@ -122,11 +130,23 @@ Path alias: `@/*` → `./src/*` (mirrored in both `tsconfig.json` and
     the first valid range when the current one is locked out.
   - Full-history fallback: when the window holds the peak but misses the
     low (e.g. GFC on 3Y — $676 last traded in 1996), `findLastSeenBefore`
-    runs on full history instead of reporting a false "Never".
-  - Status mapping: unknown/delisted symbol → `404`, upstream timeout (10s)
-    → `504`, other upstream failures → `502`.
+    runs on full history instead of reporting a false "Never". That date can
+    be **outside** `sliced`, so it will not be in `series` — the chart legend
+    must disclose it rather than imply a marker (see the downsample bullet).
+  - Status mapping: only **symbol-specific** messages become a `404`
+    (`no data found`, `not enough data`, `delisted`, `invalid symbol`,
+    `status 400|404`). Timeout/abort → `504`. Everything else → `502`,
+    so a DNS failure ("host not found") is never reported as bad input.
+    The no-data wording lives in `src/lib/errors.ts` (`noDataMessage`) so the
+    Yahoo layer and the route cannot drift apart.
   - Bounded in-memory LRU (200 entries, 1h TTL), `X-Cache: HIT|MISS`,
     `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600`.
+  - A second, smaller LRU (`historyCache`, 8 entries) holds the full history
+    of a backtest keyed on `ticker:asOf` only — it does not depend on `range`,
+    so `3Y → MAX → 5Y` on one date fetches Yahoo once. It is small on purpose:
+    each entry is a whole history (~1-2 MB for a long index series).
+  - Both caches are exported (`quoteCache`, `historyCache`) and cleared in
+    `beforeEach` — module-level state must not leak between tests.
   - `quoteSummary` (name/currency) is cosmetic — never fail the request over it.
   - Response shape: drawdown stats + `validRanges` + downsampled `series` +
     pre-downsample `points` count.
@@ -138,6 +158,8 @@ Path alias: `@/*` → `./src/*` (mirrored in both `tsconfig.json` and
     `Cache-Control: public, s-maxage=120, stale-while-revalidate=600`
     (client still fetches with `cache: "no-store"` — Yahoo ranking is flaky
     and thin responses must never stick). Upstream timeout 8s → `504`.
+  - Use `createLru` from `src/lib/lru.ts` — do not hand-roll another cache.
+    `searchCache` is exported for the same test-reset reason.
 - **Client (`app/page.tsx`) patterns:**
   - Ticker + range + asof live in the URL
     (`?ticker=NVDA&range=MAX&asof=2008-12-31`); Share button copies the link.
@@ -152,13 +174,24 @@ Path alias: `@/*` → `./src/*` (mirrored in both `tsconfig.json` and
 - **`TickerForm` search patterns:** 250ms debounce, min 2 chars,
   `cache: "no-store"`, `searchSeq` guard so slow keystrokes can't overwrite
   newer results, `typedRef` to distinguish typing from parent-driven updates,
-  Enter prefers the top suggestion. Backtest date picker caps at today, plus
-  one-click crash presets; range buttons lock out per `validRanges`.
+  Enter prefers the top suggestion. The lookup is aborted on every keystroke
+  and after 8s, and the cleanup **increments `searchSeq` before aborting** —
+  otherwise the abort rejection looks like a live failure and blanks the
+  dropdown on each keypress. Backtest date picker caps at today, plus
+  one-click crash presets from `src/lib/presets.ts`; range buttons lock out
+  per `validRanges`.
+- **Range-scoped copy must stay range-scoped.** `isAtHigh` compares the
+  current close with the peak _in the selected range_, so only `MAX` can say
+  "all-time high". Use `atHighTitle(ticker, range)` from `lib/format.ts`
+  rather than inlining the wording.
 - **Tests:** Vitest, `src/**/*.test.{ts,tsx}`, `environment: "node"`. Test the
   route handler by calling `GET` with a mocked `fetchSeries`, not via HTTP.
 - **Data caveats:** Yahoo data is unauthenticated/unofficial — can lag, gap,
-  or rate-limit. `MAX` on liquid tickers returns tens of thousands of closes;
-  first request is slow, later ones hit cache. Not financial advice.
+  or rate-limit. `normalizeBars` drops empty and duplicate dates before any
+  maths runs (a partial bar beside the settled one used to become two points
+  on one date and inflate `tradingDaysLost`). `MAX` on liquid tickers returns
+  tens of thousands of closes; first request is slow, later ones hit cache.
+  Not financial advice.
 
 ## Docker / deploy
 

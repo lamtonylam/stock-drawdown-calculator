@@ -1,6 +1,7 @@
 import YahooFinance from "yahoo-finance2";
 import type { PricePoint } from "./drawdown";
 import { dayAfterAsOf } from "./asof";
+import { noDataMessage } from "./errors";
 import { friendlyExchange } from "./names";
 import { period1ForRange, type RangeKey } from "./ranges";
 
@@ -14,6 +15,38 @@ const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
  */
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** The subset of a Yahoo chart bar this module actually reads. */
+export interface RawBar {
+  date?: Date | null;
+  close?: number | null;
+  adjclose?: number | null;
+}
+
+/**
+ * Turn Yahoo's chart bars into a clean ascending price series.
+ *
+ * Drops bars with no usable price and collapses duplicate dates — Yahoo
+ * occasionally returns a partial bar next to the settled one. Leaving the
+ * duplicates in puts two points on one x-axis date, and makes
+ * `calculateDrawdown`'s `findIndex(date)` count phantom sessions. The last
+ * bar wins, which is the settled one.
+ */
+export function normalizeBars(quotes: RawBar[] | undefined): PricePoint[] {
+  const byDate = new Map<string, number>();
+  for (const bar of quotes ?? []) {
+    const value = bar.adjclose ?? bar.close;
+    if (!bar.date || value == null) continue;
+    const close = Number(value);
+    if (!Number.isFinite(close) || close <= 0) continue;
+    const at = new Date(bar.date);
+    if (Number.isNaN(at.getTime())) continue;
+    byDate.set(toISODate(at), close);
+  }
+  return [...byDate.entries()]
+    .map(([date, close]) => ({ date, close }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export interface QuoteFetch {
@@ -112,22 +145,11 @@ export async function fetchSeries(
   ]);
 
   const price = info?.price;
-  const series: PricePoint[] = (chart.quotes ?? [])
-    .filter((q) => q.date && (q.adjclose ?? q.close) != null)
-    .map((q) => ({
-      date: toISODate(new Date(q.date)),
-      close: Number((q.adjclose ?? q.close) as number),
-    }))
-    .filter((p) => Number.isFinite(p.close) && p.close > 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const series = normalizeBars(chart.quotes);
   const capped = asOf ? series.filter((p) => p.date <= asOf) : series;
 
   if (capped.length < 2) {
-    throw new Error(
-      asOf
-        ? `Not enough data for ${ticker} on or before ${asOf}`
-        : `Not enough data for ${ticker} (check symbol)`
-    );
+    throw new Error(noDataMessage(ticker, asOf ?? null));
   }
 
   return {

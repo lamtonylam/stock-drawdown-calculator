@@ -21,9 +21,25 @@ const RANGE_SPAN_DAYS: Record<Exclude<RangeKey, "MAX">, number> = {
   "5Y": 1825,
 };
 
-/** Start of the window ending at `asOf` (YYYY-MM-DD), going back `n` days. */
+/**
+ * Start of the window ending at `asOf` (YYYY-MM-DD), going back `n` days.
+ *
+ * Callers validate `asOf` first (`parseAsOf`), so garbage here is a programmer
+ * error. Rather than emit "NaN-NaN-NaN" as a window start, fall back to the
+ * widest window — the same conservative default `period1ForRange` uses for an
+ * unknown range.
+ */
 export function daysBeforeAsOf(asOf: string, n: number): string {
-  const [y, m, d] = asOf.split("-").map(Number);
+  const parts = asOf.split("-").map(Number);
+  const [y, m, d] = parts;
+  const usable =
+    parts.length === 3 &&
+    parts.every(Number.isInteger) &&
+    m >= 1 &&
+    m <= 12 &&
+    d >= 1 &&
+    d <= 31;
+  if (!usable) return "1970-01-01";
   return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
 

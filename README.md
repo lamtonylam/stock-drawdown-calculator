@@ -23,7 +23,7 @@ npm run dev
 | Days since peak    | Calendar days since the peak                                   |
 | Peak / current     | Prices and dates behind the numbers                            |
 
-Selectable ranges are `1Y`, `3Y`, `5Y`, `MAX` (default `5Y`). All ranges use **daily** bars; `MAX` goes back to 1970. Values are split- and dividend-adjusted closes, so there are no estimates, no smoothing, and no synthetic candles. The chart is downsampled to 600 points for rendering, but always keeps the peak, last-seen, and current points so no marker silently disappears.
+Selectable ranges are `1Y`, `3Y`, `5Y`, `MAX` (default `5Y`). All ranges use **daily** bars; `MAX` goes back to 1970. Values are split- and dividend-adjusted closes, so there are no estimates, no smoothing, and no synthetic candles. The chart is downsampled to 600 points for rendering, but always keeps the peak, last-seen, and current points **when they fall inside the selected window** so no marker silently disappears. A backtest can resolve the last-seen date from full history when the window misses it (the S&P's 2009 low was last traded in 1996) — the legend then says so instead of pointing at a dot that isn't there.
 
 Ticker and range live in the URL (`?ticker=NVDA&range=MAX`), so a view is shareable — the Share button copies the current link.
 
@@ -49,9 +49,9 @@ GET /api/quote?ticker=^GSPC&range=5Y
 Returns the drawdown stats plus a downsampled `series` and the pre-downsample `points` count. Two custom behaviours worth knowing:
 
 - **Validation before upstream.** Tickers are normalised to upper case and matched against `/^\^?[A-Z0-9][A-Z0-9.\-=]{0,11}$/`. Anything else is a `400` rather than a forwarded request.
-- **Status mapping.** Unknown symbols (Yahoo's "No data found, symbol may be delisted") return `404`, upstream timeouts (`10s`) return `504`, everything else `502`.
+- **Status mapping.** Only messages about the symbol become client errors: unknown symbols (Yahoo's "No data found, symbol may be delisted") and empty windows return `404`. Upstream timeouts (`10s`) return `504`. Everything else — DNS failures, connection resets, unparseable responses — returns `502`, so an outage is never reported as the caller's fault.
 
-Responses carry `X-Cache: HIT|MISS`. The server keeps a bounded in-memory LRU (200 entries, 1 hour TTL) and sets `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600`. That cache is per-process — with multiple instances each one warms independently.
+Responses carry `X-Cache: HIT|MISS`. The server keeps a bounded in-memory LRU (200 entries, 1 hour TTL) and sets `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600`. Backtests always download full history, so that fetch gets a second, smaller cache keyed on `ticker + asOf` (range-independent) — otherwise toggling `3Y → MAX → 5Y` re-downloaded the same ~14k bars three times. Both caches are per-process: with multiple instances each one warms independently.
 
 ```jsonc
 {
@@ -94,8 +94,11 @@ src/
 └─ lib/
    ├─ drawdown.ts          # calculateDrawdown + downsample (pure)
    ├─ ranges.ts            # RANGES — single source of truth
-   ├─ yahoo.ts             # adjusted-close fetcher
-   ├─ format.ts            # fmtPct / fmtPrice / fmtDate / fmtDays
+   ├─ yahoo.ts             # fetchSeries + normalizeBars (server-side only)
+   ├─ lru.ts               # bounded TTL cache shared by both routes
+   ├─ errors.ts            # shared no-data message
+   ├─ presets.ts           # quick-pick symbols and crash dates
+   ├─ format.ts            # fmtPct / fmtPrice / fmtDate / atHighTitle
    └─ utils.ts
 ```
 
@@ -132,9 +135,11 @@ There is no `.env` to fill in: the app only reads public Yahoo Finance data. `.e
 
 Any Node host works. Keep it on Node 20+, and prefer the Docker image or `output: "standalone"` output for smaller footprints. Note that serverless platforms need the route handler's Node runtime — it makes outbound HTTPS calls to Yahoo Finance.
 
+**Put it behind a rate limit if it is public.** `/api/quote` accepts any syntactically valid symbol, so a scripted client can walk `AAAA`, `AAAB`, … and make your server the load source against Yahoo. The route validates input (so it cannot be used for injection) and caches aggressively, but nothing throttles a determined caller. A reverse proxy or edge rate limit is the cheapest place to add one.
+
 ## Caveats
 
-- Data comes from Yahoo Finance via `yahoo-finance2`, unauthenticated and unofficial. It can lag, gap, or rate-limit.
+- Data comes from Yahoo Finance via `yahoo-finance2`, unauthenticated and unofficial. It can lag, gap, or rate-limit. Duplicate and empty bars are dropped before any maths runs, so a partial bar can never become two points on one date.
 - `MAX` on very liquid tickers returns tens of thousands of daily closes; the first request is slower than later cached ones.
 - Drawdown is measured against the highest close _in the selected range_, so the same ticker at `1Y` and `MAX` can report different peaks — that is intended, and stated in the footer.
 

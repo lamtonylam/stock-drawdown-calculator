@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  atHighTitle,
   fmtDate,
   fmtDays,
   fmtPct,
@@ -17,6 +18,8 @@ export interface Stats {
   ticker: string;
   name: string;
   currency: string;
+  /** Selected window; `isAtHigh` is scoped to it, so the copy needs it too. */
+  range: string;
   currentPrice: number;
   currentDate: string;
   peakPrice: number;
@@ -103,7 +106,7 @@ export function StatsCards({ stats }: { stats: Stats }) {
           </span>
           <div className="min-w-0">
             <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-              {stats.ticker} is at an all-time high
+              {atHighTitle(stats.ticker, stats.range)}
             </p>
             <p className="mt-0.5 text-xs text-emerald-700/70 dark:text-emerald-300/70">
               {fmtPrice(stats.currentPrice, stats.currency)} on{" "}

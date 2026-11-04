@@ -15,12 +15,22 @@ import {
   type RangeKey,
 } from "@/lib/ranges";
 import { parseAsOf } from "@/lib/asof";
-import { fetchSeries } from "@/lib/yahoo";
+import { noDataMessage } from "@/lib/errors";
+import { createLru } from "@/lib/lru";
+import { fetchSeries, type QuoteFetch } from "@/lib/yahoo";
 
 const UPSTREAM_TIMEOUT_MS = 10_000;
 
 export const CACHE_TTL_MS = 60 * 60 * 1000;
 export const CACHE_MAX_ENTRIES = 200;
+/**
+ * Backtests always fetch full history, so the response cache (keyed by range)
+ * re-downloads the same ~14k bars once per range: `3Y → MAX → 5Y` on one date
+ * used to be three identical upstream calls. Cache the fetch itself, keyed
+ * without the range. Deliberately small — these entries hold whole histories
+ * (~1-2 MB for a long index series), unlike the downsampled responses above.
+ */
+export const HISTORY_CACHE_MAX_ENTRIES = 8;
 
 /**
  * Cacheable for a short window, then revalidated in the background. Without
@@ -47,34 +57,42 @@ export interface QuotePayload extends DrawdownResult {
   points: number;
 }
 
-interface CacheEntry {
-  at: number;
-  data: QuotePayload;
-}
+/**
+ * Bounded LRUs. A plain Map grew forever, so every distinct symbol — including
+ * junk from a scripted client — permanently pinned its payload in memory.
+ * Exported so tests can reset them between cases.
+ */
+export const quoteCache = createLru<string, QuotePayload>(
+  CACHE_MAX_ENTRIES,
+  CACHE_TTL_MS
+);
+export const historyCache = createLru<string, QuoteFetch>(
+  HISTORY_CACHE_MAX_ENTRIES,
+  CACHE_TTL_MS
+);
 
 /**
- * Bounded LRU. A plain Map grew forever, so every distinct symbol — including
- * junk from a scripted client — permanently pinned its payload in memory.
+ * Fetch (or reuse) the series a request needs.
+ *
+ * Backtests always pull `MAX` history: the stats keep the requested window's
+ * contract, but `validRanges` and the last-seen fallback need the whole past.
+ * That fetch does not depend on `range`, so it is cached on `ticker:asOf`.
  */
-const cache = new Map<string, CacheEntry>();
+async function fetchHistory(
+  ticker: string,
+  range: RangeKey,
+  asOf: string | null
+): Promise<QuoteFetch> {
+  const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  if (!asOf) return fetchSeries(ticker, range, signal);
 
-function cacheGet(key: string): CacheEntry | undefined {
-  const hit = cache.get(key);
-  if (!hit) return undefined;
-  // Re-insert to mark as most recently used.
-  cache.delete(key);
-  cache.set(key, hit);
-  return hit;
-}
+  const key = `${ticker}:${asOf}`;
+  const cached = historyCache.get(key);
+  if (cached) return cached;
 
-function cacheSet(key: string, entry: CacheEntry): void {
-  cache.delete(key);
-  cache.set(key, entry);
-  while (cache.size > CACHE_MAX_ENTRIES) {
-    const oldest = cache.keys().next();
-    if (oldest.done) break;
-    cache.delete(oldest.value);
-  }
+  const fetched = await fetchSeries(ticker, "MAX", signal, asOf);
+  historyCache.set(key, fetched);
+  return fetched;
 }
 
 /**
@@ -90,13 +108,21 @@ export function normalizeTicker(raw: string | null): string | null {
 }
 
 /**
- * Yahoo reports unknown symbols as "No data found, symbol may be delisted" —
- * which the old regex missed, so bad tickers came back as 502 and polluted the
- * 5xx rate. Timeouts are separated out so they can be retried/alerted on.
+ * Map an upstream failure message to a status code.
+ *
+ * Only messages about the *symbol* may become a 404. A loose `/not found/`
+ * also matched DNS failures ("host not found"), which reported an outage as
+ * the caller's fault and hid it from 5xx monitoring, while `/invalid/` caught
+ * unrelated validation errors. Anything unrecognised stays a 502.
  */
 export function statusForUpstreamError(message: string): number {
+  // Timeouts first: "the operation was aborted" must never read as not-found.
   if (/abort|timeout|timed out/i.test(message)) return 504;
-  if (/not enough data|no data|not found|delisted|invalid|404/i.test(message)) {
+  if (
+    /no data found|not enough data|delisted|invalid symbol|status (?:400|404)/i.test(
+      message
+    )
+  ) {
     return 404;
   }
   return 502;
@@ -130,43 +156,29 @@ export async function GET(req: Request) {
   }
 
   const key = `${ticker}:${range}:${asOf ?? "live"}`;
-  const hit = cacheGet(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-    return NextResponse.json(hit.data, {
+  const hit = quoteCache.get(key);
+  if (hit) {
+    return NextResponse.json(hit, {
       headers: { "X-Cache": "HIT", "Cache-Control": CACHE_CONTROL },
     });
   }
 
   try {
-    // Backtests fetch full history once: the stats keep the requested
-    // window's contract, but range validity and the last-seen fallback need
-    // the whole past. Live mode keeps its windowed fetch untouched.
-    const fetched = await fetchSeries(
-      ticker,
-      asOf ? "MAX" : range,
-      AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      asOf
-    );
+    const fetched = await fetchHistory(ticker, range, asOf);
     // Slice defensively: the fetcher already caps at `asOf`, but a mocked
     // series may extend past it.
     const history = asOf
       ? fetched.series.filter((p) => p.date <= asOf)
       : fetched.series;
     if (history.length < 2) {
-      throw new Error(
-        asOf
-          ? `Not enough data for ${fetched.ticker} on or before ${asOf}`
-          : `Not enough data for ${fetched.ticker} (check symbol)`
-      );
+      throw new Error(noDataMessage(fetched.ticker, asOf));
     }
     const sliced =
       asOf && range !== "MAX"
         ? history.filter((p) => p.date >= period1ForRange(range, asOf))
         : history;
     if (sliced.length < 2) {
-      throw new Error(
-        `Not enough data for ${fetched.ticker} on or before ${asOf}`
-      );
+      throw new Error(noDataMessage(fetched.ticker, asOf));
     }
     let stats = calculateDrawdown(sliced);
 
@@ -229,7 +241,7 @@ export async function GET(req: Request) {
       points: sliced.length,
     };
 
-    cacheSet(key, { at: Date.now(), data: payload });
+    quoteCache.set(key, payload);
     return NextResponse.json(payload, {
       headers: { "X-Cache": "MISS", "Cache-Control": CACHE_CONTROL },
     });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   ArrowRightIcon,
   LoaderIcon,
@@ -12,27 +12,22 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { friendlyName } from "@/lib/names";
+import { BACKTEST_PRESETS, PRESETS } from "@/lib/presets";
 import { RANGES, type RangeKey } from "@/lib/ranges";
 
 const RANGE_OPTIONS: { value: RangeKey; label: string }[] = RANGES.map(
   (value) => ({ value, label: value === "MAX" ? "Max" : value })
 );
 
-const PRESETS = ["^GSPC", "^NDX", "^DJI", "AAPL", "NVDA", "BTC-USD"].map(
-  (symbol) => ({ symbol, label: friendlyName(symbol) })
-);
+const PRESET_CHIPS = PRESETS.map((symbol) => ({
+  symbol,
+  label: friendlyName(symbol),
+}));
 
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
-
-/** One-click crash dates for backtesting — all from the 2008 crisis. */
-const BACKTEST_PRESETS = [
-  { label: "Lehman '08", date: "2008-09-15" },
-  { label: "GFC", date: "2009-03-09" },
-  { label: "COVID", date: "2020-03-23" },
-  { label: "Tariff", date: "2025-04-08" },
-  { label: "Iran war", date: "2025-06-20" },
-];
+/** Client-side guard: a hung lookup must not spin the spinner forever. */
+const SEARCH_TIMEOUT_MS = 8_000;
 
 interface SymbolResult {
   symbol: string;
@@ -78,11 +73,20 @@ export function TickerForm({
   // the dropdown.
   const typedRef = useRef(false);
 
+  // Bump the sequence to make any in-flight lookup a no-op. Wrapped in a
+  // callback so the effect cleanup can call it instead of touching the ref
+  // directly (react-hooks warns about ref reads in cleanup, and this one is a
+  // deliberate write).
+  const invalidateLookups = useCallback(() => {
+    searchSeq.current++;
+  }, []);
+
   // Debounced natural-language lookup — "apple" → AAPL, "s&p" → ^GSPC.
   // State writes happen inside the timer callback (never synchronously in
   // the effect body) to avoid cascading renders.
   useEffect(() => {
     const q = draft.trim();
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       if (!typedRef.current) {
         // Parent-driven change (or initial mount) — dismiss and invalidate
@@ -105,11 +109,16 @@ export function TickerForm({
       }
       setSearching(true);
       const seq = ++searchSeq.current;
+      const abortTimer = setTimeout(
+        () => controller.abort(),
+        SEARCH_TIMEOUT_MS
+      );
       try {
         // Bypass the browser HTTP cache: a stale suggestion list is worse
         // than an extra upstream request (already debounced + cached server-side).
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
           cache: "no-store",
+          signal: controller.signal,
         });
         const json = await res.json();
         // A slower keystroke must not overwrite newer results.
@@ -126,11 +135,18 @@ export function TickerForm({
           setOpen(false);
         }
       } finally {
+        clearTimeout(abortTimer);
         if (searchSeq.current === seq) setSearching(false);
       }
     }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [draft]);
+    return () => {
+      clearTimeout(timer);
+      // Invalidate *before* aborting: the rejection would otherwise look like
+      // a live failure and clear the dropdown on every keystroke.
+      invalidateLookups();
+      controller.abort();
+    };
+  }, [draft, invalidateLookups]);
 
   // Close the dropdown on outside click.
   useEffect(() => {
@@ -325,7 +341,7 @@ export function TickerForm({
         <Separator orientation="vertical" className="hidden h-5 sm:block" />
 
         <div className="flex flex-wrap gap-1">
-          {PRESETS.map((p) => (
+          {PRESET_CHIPS.map((p) => (
             <Button
               key={p.symbol}
               type="button"

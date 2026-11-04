@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createLru } from "@/lib/lru";
 import { searchSymbols, type SymbolResult } from "@/lib/yahoo";
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
@@ -17,30 +18,11 @@ const CACHE_MAX_ENTRIES = 200;
 /** Letters, numbers, spaces and the punctuation real names use (&, ., -, /). */
 const QUERY_RE = /^[A-Z0-9 .&'\-/^=]{1,60}$/i;
 
-interface CacheEntry {
-  at: number;
-  data: SymbolResult[];
-}
-
-const cache = new Map<string, CacheEntry>();
-
-function cacheGet(key: string): CacheEntry | undefined {
-  const hit = cache.get(key);
-  if (!hit) return undefined;
-  cache.delete(key);
-  cache.set(key, hit);
-  return hit;
-}
-
-function cacheSet(key: string, entry: CacheEntry): void {
-  cache.delete(key);
-  cache.set(key, entry);
-  while (cache.size > CACHE_MAX_ENTRIES) {
-    const oldest = cache.keys().next();
-    if (oldest.done) break;
-    cache.delete(oldest.value);
-  }
-}
+/** Shared bounded LRU; exported so tests can reset it between cases. */
+export const searchCache = createLru<string, SymbolResult[]>(
+  CACHE_MAX_ENTRIES,
+  CACHE_TTL_MS
+);
 
 export async function GET(req: Request) {
   let searchParams: URLSearchParams;
@@ -59,10 +41,10 @@ export async function GET(req: Request) {
   }
   const q = raw.toUpperCase();
 
-  const hit = cacheGet(q);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+  const hit = searchCache.get(q);
+  if (hit) {
     return NextResponse.json(
-      { results: hit.data },
+      { results: hit },
       { headers: { "X-Cache": "HIT", "Cache-Control": CACHE_CONTROL } }
     );
   }
@@ -72,7 +54,7 @@ export async function GET(req: Request) {
       raw,
       AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
     );
-    cacheSet(q, { at: Date.now(), data: results });
+    searchCache.set(q, results);
     return NextResponse.json(
       { results },
       { headers: { "X-Cache": "MISS", "Cache-Control": CACHE_CONTROL } }

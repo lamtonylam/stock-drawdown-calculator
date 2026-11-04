@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  atHighTitle,
   fmtDate,
   fmtDays,
   fmtPct,
@@ -48,5 +49,21 @@ describe("format helpers", () => {
     expect(fmtTradingSessions(100)).toBe("100 sessions");
     expect(fmtTradingSessions(500)).toContain("sessions");
     expect(fmtTradingSessions(500)).toContain("y)");
+  });
+});
+
+describe("atHighTitle", () => {
+  it("only says 'all-time' for the MAX range", () => {
+    expect(atHighTitle("^GSPC", "MAX")).toBe("^GSPC is at an all-time high");
+  });
+
+  it("scopes the claim to the window for 1Y/3Y/5Y", () => {
+    // `isAtHigh` compares against the peak *inside the range*, so a 1Y window
+    // that tops out below the real record must not claim a record.
+    for (const range of ["1Y", "3Y", "5Y"]) {
+      const title = atHighTitle("NVDA", range);
+      expect(title).toBe(`NVDA is at its highest close in ${range}`);
+      expect(title).not.toContain("all-time");
+    }
   });
 });

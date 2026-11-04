@@ -16,6 +16,21 @@ import type { PricePoint } from "@/lib/drawdown";
 
 type TooltipItem = { payload?: { date?: string; close?: number } };
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
 function ChartTooltip({
   active,
   payload,
@@ -49,12 +64,16 @@ function ChartTooltip({
 function formatTick(iso: string): string {
   // YYYY-MM-DD -> "Mar '24"
   const [y, m] = iso.split("-");
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const idx = Number(m) - 1;
-  return `${months[idx] ?? m} '${y.slice(2)}`;
+  return `${MONTHS[Number(m) - 1] ?? m} '${y.slice(2)}`;
 }
 
-function LegendDot({ color, children }: { color: string; children: React.ReactNode }) {
+function LegendDot({
+  color,
+  children,
+}: {
+  color: string;
+  children: React.ReactNode;
+}) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
@@ -159,7 +178,10 @@ export function DrawdownChart({
               width={58}
             />
             <Tooltip
-              cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "4 4" }}
+              cursor={{
+                stroke: "var(--muted-foreground)",
+                strokeDasharray: "4 4",
+              }}
               content={
                 <ChartTooltip currency={currency} peakPrice={peakPrice} />
               }
@@ -218,10 +240,26 @@ export function DrawdownChart({
         <LegendDot color="var(--chart-peak)">
           Peak {fmtPrice(peakPrice, currency)}
         </LegendDot>
-        {lastSeenDate && (
+        {/*
+         * Only promise a marker that is actually drawn. A backtest can resolve
+         * the last-seen date from full history when the window misses it (GFC
+         * on 3Y: $676 last traded in 1996), and that point is not in `series`.
+         * A dot swatch for it was a lie — say where it sits instead.
+         */}
+        {last ? (
           <LegendDot color="var(--chart-last)">
-            Last seen {fmtDate(lastSeenDate)}
+            Last seen {fmtDate(last.date)}
           </LegendDot>
+        ) : (
+          lastSeenDate && (
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="size-2 rounded-full border border-muted-foreground/60"
+                aria-hidden
+              />
+              Last seen {fmtDate(lastSeenDate)} — before this window
+            </span>
+          )
         )}
         <LegendDot color="var(--chart-now)">
           Now {fmtDate(currentDate)}
