@@ -49,6 +49,15 @@ const FRIENDLY_NAMES: Record<string, string> = {
   QQQ: "Nasdaq 100 ETF",
   DIA: "Dow Jones ETF",
   VTI: "Total US Market ETF",
+  // EUR-listed UCITS ETFs on indices — same exposure, priced in euros.
+  // The "(EUR)" suffix matters: these are the presets a euro-based user
+  // picks to see drawdowns in their own currency.
+  "CSPX.AS": "S&P 500 ETF (EUR)",
+  "IUSA.AS": "S&P 500 ETF (EUR)",
+  "SXR8.DE": "S&P 500 ETF (EUR)",
+  "EQQQ.DE": "Nasdaq 100 ETF (EUR)",
+  "EUN2.DE": "EURO STOXX 50 ETF (EUR)",
+  "EXSA.DE": "Europe 600 ETF (EUR)",
 };
 
 export function friendlyName(symbol: string): string {

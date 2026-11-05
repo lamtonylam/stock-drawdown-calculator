@@ -13,6 +13,13 @@ export const PRESETS = [
   "AAPL",
   "NVDA",
   "BTC-USD",
+  // Index exposure priced in euros: UCITS ETFs listed on European venues.
+  // Yahoo serves them with currency "EUR", so peak/current prices and the
+  // chart render in euros — the drawdown then includes EUR/USD moves, not
+  // just the index. Launched 2007–2010, so pre-2010 backtests 404 on them.
+  "CSPX.AS", // iShares Core S&P 500 UCITS (Amsterdam)
+  "EQQQ.DE", // Invesco Nasdaq-100 UCITS (Xetra)
+  "EUN2.DE", // iShares Core EURO STOXX 50 UCITS (Xetra)
 ] as const;
 
 /**

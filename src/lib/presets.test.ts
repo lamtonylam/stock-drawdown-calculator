@@ -7,6 +7,13 @@ describe("PRESETS", () => {
     expect(new Set(PRESETS).size).toBe(PRESETS.length);
     for (const symbol of PRESETS) expect(symbol.trim()).toBe(symbol);
   });
+
+  it("only contains symbols the quote API will accept", () => {
+    // Mirrors the validation in app/api/quote/route.ts — a preset that
+    // fails it would 400 on click instead of showing a drawdown.
+    const valid = /^\^?[A-Z0-9][A-Z0-9.\-=]{0,11}$/;
+    for (const symbol of PRESETS) expect(symbol).toMatch(valid);
+  });
 });
 
 describe("BACKTEST_PRESETS", () => {

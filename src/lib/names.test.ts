@@ -23,6 +23,12 @@ describe("friendlyName", () => {
     expect(friendlyName("KNEBV.HE")).toBe("Kone");
   });
 
+  it("maps EUR-listed UCITS ETFs on indices", () => {
+    expect(friendlyName("CSPX.AS")).toBe("S&P 500 ETF (EUR)");
+    expect(friendlyName("EQQQ.DE")).toBe("Nasdaq 100 ETF (EUR)");
+    expect(friendlyName("EUN2.DE")).toBe("EURO STOXX 50 ETF (EUR)");
+  });
+
   it("falls back to the raw symbol", () => {
     expect(friendlyName("XYZ")).toBe("XYZ");
     expect(friendlyName("^UNKNOWN")).toBe("^UNKNOWN");
